@@ -1,0 +1,31 @@
+ci:
+    autofix_prs: true
+    autoupdate_schedule: quarterly
+    autoupdate_commit_msg: 'Bump `pre-commit` Hooks to Latest Versions'
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.5
+    hooks:
+      # Run the formatter.
+      - id: ruff-format
+      # Run the linter.
+      - id: ruff-check
+        args:
+          - --fix
+          - --unsafe-fixes
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.17.0
+    hooks:
+      - id: mypy
+        name: mypy
+        additional_dependencies:
+          - aiorem~=0.0.2
+          - httpx~=0.28.1
+          - pydantic~=2.11.7
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.20.0
+    hooks:
+      - id: pyupgrade
+        args:
+          - --py313-plus
