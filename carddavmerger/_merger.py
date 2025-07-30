@@ -100,7 +100,7 @@ class AddressBookMerger(AbstractResourceManagerCollection):
                         source_id,
                         target_id,
                     )
-                    return
+                    continue
 
                 async with asyncio.TaskGroup() as tg:
                     source_task = tg.create_task(
@@ -123,7 +123,7 @@ class AddressBookMerger(AbstractResourceManagerCollection):
                         source_id,
                         target_id,
                     )
-                    return
+                    continue
 
             logging.info(
                 "Uploading vCard %s from source %s to target %s.", uid, source_id, target_id
