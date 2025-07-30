@@ -16,7 +16,7 @@ class _ClientConfig(BaseModel):
 
 class _MergerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    target: _ClientConfig
+    targets: dict[str, _ClientConfig]
     sources: dict[str, _ClientConfig]
 
 
@@ -30,11 +30,14 @@ def load_address_book_merger(path: Path | str) -> AddressBookMerger:
 
     config = _MergerConfig.model_validate(tomllib.load(path.open("rb")))
 
-    target_config = CardDavClient(
-        username=config.target.username,
-        password=config.target.password,
-        address_book_url=config.target.address_book_url,
-    )
+    target_config = {
+        target_id: CardDavClient(
+            username=target.username,
+            password=target.password,
+            address_book_url=target.address_book_url,
+        )
+        for target_id, target in config.targets.items()
+    }
     sources_config = {
         source_id: CardDavClient(
             username=source.username,
@@ -44,4 +47,4 @@ def load_address_book_merger(path: Path | str) -> AddressBookMerger:
         for source_id, source in config.sources.items()
     }
 
-    return AddressBookMerger(target=target_config, sources=sources_config)
+    return AddressBookMerger(targets=target_config, sources=sources_config)

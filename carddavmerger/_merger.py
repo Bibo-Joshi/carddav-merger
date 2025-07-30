@@ -12,7 +12,8 @@ from ._vcardinfo import VCardInfo
 class ComparisonMethod(Enum):
     EDIT_DATE = auto()
     """Compare vCards based on their last modified date. Saves a bit of network traffic by not
-    downloading the target vCard. Might be less reliable in some edge cases.
+    downloading the target vCard. Might be less reliable in some edge cases, e.g. when a
+    contact was changed on the target but the source contact remains unchanged.
     """
     CONTENT = auto()
     """Compare vCards based on their content. Downloads the target vCard to compare it with the
@@ -23,30 +24,33 @@ class AddressBookMerger(AbstractResourceManagerCollection):
     """Merges multiple CardDAV address books into a single target address book.
 
     Args:
-        target (CardDavClient): The target CardDAV client where the merged address book will be
-            stored.
+        targets (Mapping[str, CardDavClient]): A mapping of target IDs (just some identifiers) to
+            CardDAV clients to which the merged address book will be stored.
         sources (Mapping[str, CardDavClient]): A mapping of source IDs (just some indentifiers) to
             CardDAV clients from which the address books will be merged.
 
     """
 
-    def __init__(self, target: CardDavClient, sources: Mapping[str, CardDavClient]) -> None:
-        self._target = target
+    def __init__(
+        self, targets: Mapping[str, CardDavClient], sources: Mapping[str, CardDavClient]
+    ) -> None:
+        self._targets = targets
         self._sources = sources
 
-        self.__target_state: dict[str, VCardInfo] | None = None
+        self.__target_states: dict[str, dict[str, VCardInfo]] | None = None
         self.__source_states: dict[str, dict[str, VCardInfo]] | None = None
 
     @property
     def _resource_managers(self) -> Collection[AbstractResourceManager]:
-        return [self._target, *self._sources.values()]
+        return [*self._targets.values(), *self._sources.values()]
 
-    @property
-    def _target_state(self) -> dict[str, VCardInfo]:
-        """Get the current state of the target address book."""
-        if self.__target_state is None:
-            raise RuntimeError("Target state not loaded. Call initialize() first.")
-        return self.__target_state
+    def _target_state(self, target_id: str) -> dict[str, VCardInfo]:
+        """Get the current state of the target address book by its ID."""
+        if self.__target_states is None:
+            raise RuntimeError("Target states not loaded. Call initialize() first.")
+        if target_id not in self.__target_states:
+            raise ValueError(f"Target ID '{target_id}' not found in targets.")
+        return self.__target_states[target_id]
 
     def _source_state(self, source_id: str) -> dict[str, VCardInfo]:
         """Get the current state of a source address book by its ID."""
@@ -59,13 +63,18 @@ class AddressBookMerger(AbstractResourceManagerCollection):
     async def initialize(self) -> None:
         """Initialize the merger by loading the current states of the target and sources."""
         async with asyncio.TaskGroup() as tg:
-            target_task = tg.create_task(self._target.get_vcard_infos())
+            target_tasks = {
+                target_id: tg.create_task(target.get_vcard_infos())
+                for target_id, target in self._targets.items()
+            }
             source_tasks = {
                 source_id: tg.create_task(source.get_vcard_infos())
                 for source_id, source in self._sources.items()
             }
 
-        self.__target_state = target_task.result()
+        self.__target_states = {
+            target_id: target_task.result() for target_id, target_task in target_tasks.items()
+        }
         self.__source_states = {
             source_id: source_task.result() for source_id, source_task in source_tasks.items()
         }
@@ -76,41 +85,54 @@ class AddressBookMerger(AbstractResourceManagerCollection):
         """Handle a single vCard from a source address book."""
         vcard_content: bytes | None = None
 
-        if (target_vcard_info := self._target_state.get(uid)) is not None:
-            if comparison_method is ComparisonMethod.EDIT_DATE and (
-                target_vcard_info.last_modified >= vcard_info.last_modified
-            ):
-                # If the target already has a newer version, skip this vCard.
-                logging.debug(
-                    "Skipping vCard %s from source %s, target edit date is fresh enough.",
-                    uid,
-                    source_id,
-                )
-                return
+        for target_id in self._targets:
+            if (target_vcard_info := self._target_state(target_id).get(uid)) is not None:
+                if comparison_method is ComparisonMethod.EDIT_DATE and (
+                    target_vcard_info.last_modified >= vcard_info.last_modified
+                ):
+                    # If the target already has a newer version, skip this vCard.
+                    logging.debug(
+                        (
+                            "Skipping vCard %s from source %s, edit date on target %s "
+                            "is fresh enough."
+                        ),
+                        uid,
+                        source_id,
+                        target_id,
+                    )
+                    return
 
-            async with asyncio.TaskGroup() as tg:
-                source_task = tg.create_task(
-                    self._sources[source_id].download_vcard_to_memory(uid)
-                )
-                target_task = tg.create_task(self._target.download_vcard_to_memory(uid))
+                async with asyncio.TaskGroup() as tg:
+                    source_task = tg.create_task(
+                        self._sources[source_id].download_vcard_to_memory(uid)
+                    )
+                    target_task = tg.create_task(
+                        self._targets[target_id].download_vcard_to_memory(uid)
+                    )
 
-            source_vcard_content = await source_task
-            target_vcard_content = await target_task
-            if source_vcard_content == target_vcard_content:
-                # If the content is the same, skip this vCard.
-                logging.debug(
-                    "Skipping vCard %s from source %s, content is identical to target.",
-                    uid,
-                    source_id,
-                )
-                return
+                source_vcard_content = await source_task
+                target_vcard_content = await target_task
+                if source_vcard_content == target_vcard_content:
+                    # If the content is the same, skip this vCard.
+                    logging.debug(
+                        (
+                            "Skipping vCard %s from source %s, content on target %s is identical "
+                            "to target."
+                        ),
+                        uid,
+                        source_id,
+                        target_id,
+                    )
+                    return
 
-        logging.info("Uploading vCard %s from source %s to target.", uid, source_id)
-        client = self._sources[source_id]
+            logging.info(
+                "Uploading vCard %s from source %s to target %s.", uid, source_id, target_id
+            )
+            client = self._sources[source_id]
 
-        if vcard_content is None:
-            vcard_content = await client.download_vcard_to_memory(uid)
-        await self._target.upload_vcard(uid, vcard_content)
+            if vcard_content is None:
+                vcard_content = await client.download_vcard_to_memory(uid)
+            await self._targets[target_id].upload_vcard(uid, vcard_content)
 
     async def merge_source(self, source_id: str, comparison_method: ComparisonMethod) -> None:
         """Merge a single source address book into the target address book."""
@@ -129,7 +151,7 @@ class AddressBookMerger(AbstractResourceManagerCollection):
                 tg.create_task(self.merge_source(source_id, comparison_method))
 
         # After merging, we can clear the states to allow re-initialization if needed.
-        self.__target_state = None
+        self.__target_states = None
         self.__source_states = None
 
     async def do_merge(self, comparison_method: ComparisonMethod) -> None:
