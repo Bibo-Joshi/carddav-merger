@@ -15,10 +15,15 @@ Simple Python Tool to Merge Several CardDav Address Books into One.
 * Create a file `config.toml` in the root directory with the following content:
   
   ```toml
-  [target]
-  username="username-target"
-  password="password-target"
-  address_book_url="https://target.server/path/to/addressbook/"
+  [targets.target-1]
+  username="username-target-1"
+  password="password-target-1"
+  address_book_url="https://target-1.server/path/to/addressbook/"
+  
+  [targets.target-2]
+  username="username-target-2"
+  password="password-target-2"
+  address_book_url="https://target-2.server/path/to/addressbook/"
   
   [sources.source-1]
   username="username-source-1"
@@ -31,7 +36,7 @@ Simple Python Tool to Merge Several CardDav Address Books into One.
   address_book_url = "https://source2.server/path/to/addressbook/"
   ```
   
-  You can add an abitrary number of source address books. The source IDs can be any string, but must be unique.
+  You can add an abitrary number of source address books. The IDs can be any string, but must be unique.
 
 * Adapt the `main.py` file to your needs, e.g. to choose a different comparison method or to change the logging level.
 * Run the script via `python main.py path/to/config.toml`.
