@@ -1,3 +1,6 @@
+> [!Warning]
+> Deprecated in favor of [`carddav-utils`](https://github.com/Bibo-Joshi/carddav-utils)
+
 # carddav-merger
 Simple Python Tool to Merge Several CardDav Address Books into One.
 
